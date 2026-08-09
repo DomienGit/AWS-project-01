@@ -15,7 +15,9 @@ Zrzuć aktualny stan pracy do `.handoff/CURRENT.md` (rolling - nadpisz całość
 - **Następne kroki** - co jest kolejną rzeczą do zrobienia
 - **Pliki dotknięte w sesji** - ścieżki względne
 - **Niecommitowane zmiany w repo** - uruchom `git status`, wypisz lub napisz "czysto"
-- **Niestandardowy kontekst / decyzje** - rzeczy które nowa sesja na PC2 musi wiedzieć (np. "używamy regionu eu-west-1", "IAM role name to XYZ", "nie commituj pliku .env")
+- **Środowisko wykonania** - skąd user odpala komendy (AWS CloudShell / instancja EC2 / laptop z `aws configure` / inne) + region + ewentualne quirki (np. "MY_IP z checkip.amazonaws.com = IP CloudShell, nie laptopa")
+- **Decyzje z sesji** - co user wybrał w tej konwersacji (np. "strategia pełnego recreate", "keypair odstawiony na bok")
+- **Do sprawdzenia przed startem** - prerequisites które user musi mieć na nowym PC żeby kontynuować (np. "`~/devops-vars.sh` istnieje", "region CloudShell = eu-central-1", "`$MAVEN_AMI` ustawione")
 
 ### Krok 2: Zapisz plik w tym formacie
 
@@ -40,11 +42,23 @@ Ostatnia aktualizacja: YYYY-MM-DD HH:MM | PC: <hostname> | branch: <branch>
 ## Niecommitowane zmiany w repo
 - (lista z `git status` albo "czysto")
 
-## Niestandardowy kontekst / decyzje
-- ...
+## Środowisko wykonania
+- (skąd user odpala komendy AWS + region + quirki IP/etc)
+
+## Decyzje z sesji
+- (co user wybrał w tej rozmowie)
+
+## Do sprawdzenia przed startem (prerequisites)
+- (co musi być gotowe na nowym PC żeby kontynuować)
 ```
 
 Timestamp z `date +"%Y-%m-%d %H:%M"`, hostname z `hostname`, branch z `git rev-parse --abbrev-ref HEAD`.
+
+### Krok 2.5: Pokaż userowi plik do akceptacji (opcjonalnie, ale zalecane przy długich sesjach)
+
+Po zapisaniu pokaż userowi krótko ścieżkę pliku + streść co w nim jest (albo poproś o `cat .handoff/CURRENT.md`). Czekaj na feedback, dopuszczaj poprawki. Dopiero po akceptacji rób Krok 3 (git).
+
+Dla krótkich / prostych sesji ten krok można pominąć. Dla długich, wielowątkowych, lub z wieloma decyzjami - **zawsze pokazuj**.
 
 ### Krok 3: Git
 

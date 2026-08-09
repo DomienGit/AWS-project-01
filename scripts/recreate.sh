@@ -7,16 +7,18 @@
 #   AZ:        eu-central-1a (single-AZ)
 #   VPC1:      192.168.0.0/16  (app)
 #   VPC2:      172.32.0.0/16   (secondary, tylko dla demonstracji TGW)
-#   Subnety:   .1.0/24 = public,  .2.0/24 = private
+#   Subnety:   .1.0/24 = public,  .10.0/24 = private
 #
 # Użycie:  ./recreate.sh
 # Czas:    ~10-15 min (NAT GW + TGW attachments tworzą się długo)
 
-set -uo pipefail
+set -euo pipefail  # -e: fail fast na pierwszym błędzie (teardown ma -uo pipefail bo musi tolerować "already deleted")
 
 # === KONFIGURACJA (edytuj jeśli potrzeba) ===
-REGION="${AWS_DEFAULT_REGION:-eu-central-1}"
-AZ="${AZ:-eu-central-1a}"
+# Region hardcoded — jeśli chcesz inny, zmień tutaj. Nie polegamy na AWS_DEFAULT_REGION
+# (env var nadpisywał fallback i komendy szły w zły region).
+REGION="eu-central-1"
+AZ="eu-central-1a"  # single-AZ; dla multi-AZ rozbuduj na eu-central-1b + kolejne subnety
 
 VPC1_CIDR="192.168.0.0/16"
 VPC2_CIDR="172.32.0.0/16"
@@ -84,7 +86,7 @@ PUB1_ID=$(aws ec2 create-subnet --region "$REGION" --vpc-id "$VPC1_ID" --cidr-bl
   --availability-zone "$AZ" \
   --tag-specifications "ResourceType=subnet,Tags=[{Key=Name,Value=app-pub-1a}]" \
   --query 'Subnet.SubnetId' --output text)
-aws ec2 modify-subnet-attribute --subnet-id "$PUB1_ID" --map-public-ip-on-launch >/dev/null
+aws ec2 modify-subnet-attribute --region "$REGION" --subnet-id "$PUB1_ID" --map-public-ip-on-launch >/dev/null
 savevar PUB1_ID "$PUB1_ID"
 echo "PUB1: $PUB1_ID"
 
@@ -99,7 +101,7 @@ PUB2_ID=$(aws ec2 create-subnet --region "$REGION" --vpc-id "$VPC2_ID" --cidr-bl
   --availability-zone "$AZ" \
   --tag-specifications "ResourceType=subnet,Tags=[{Key=Name,Value=secondary-pub-1a}]" \
   --query 'Subnet.SubnetId' --output text)
-aws ec2 modify-subnet-attribute --subnet-id "$PUB2_ID" --map-public-ip-on-launch >/dev/null
+aws ec2 modify-subnet-attribute --region "$REGION" --subnet-id "$PUB2_ID" --map-public-ip-on-launch >/dev/null
 savevar PUB2_ID "$PUB2_ID"
 echo "PUB2: $PUB2_ID"
 
@@ -195,8 +197,11 @@ echo "TGW routes dodane"
 
 # === [10/10] Security Groups (kaskadowe referencje) ===
 echo "--- [10/10] Security Groups ---"
-# Aktualne IP laptopa/CloudShell (do SSH na bastion)
-MY_IP=$(curl -s https://checkip.amazonaws.com)/32
+# Ręczne podanie IP laptopa — skrypt jest odpalany z CloudShell, więc curl checkip
+# zwróciłby IP CloudShell (Frankfurt), a nie usera. SSH na Bastion musi działać z laptopa.
+read -r -p "Podaj swój publiczny IP laptopa (np. 1.2.3.4): " MY_IP_INPUT
+[[ -z "$MY_IP_INPUT" ]] && { echo "ERROR: IP wymagane dla BastionSG."; exit 1; }
+MY_IP="${MY_IP_INPUT}/32"
 savevar MY_IP "$MY_IP"
 
 # BastionSG — SSH z mojego IP

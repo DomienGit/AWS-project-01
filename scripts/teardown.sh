@@ -9,7 +9,9 @@
 #   ./teardown.sh vpc-aaa vpc-bbb   # podaj VPC ID bezpośrednio
 
 set -uo pipefail
-REGION="${AWS_DEFAULT_REGION:-eu-central-1}"
+# Region hardcoded — jeśli chcesz inny, zmień tutaj. Nie polegamy na AWS_DEFAULT_REGION
+# (wcześniej env var nadpisywał fallback i teardown pytał w złym regionie).
+REGION="eu-central-1"
 
 # --- Wczytaj vars jeśli plik istnieje ---
 [[ -f ~/devops-vars.sh ]] && source ~/devops-vars.sh
@@ -101,19 +103,18 @@ for eip in $(aws ec2 describe-addresses --region "$REGION" \
   aws ec2 release-address --region "$REGION" --allocation-id "$eip" 2>&1 | sed 's/^/    /' || true
 done
 
-# === [4/10] TGW attachments (do tych VPC) ===
-echo "--- [4/10] TGW attachments ---"
+# === [4/10] TGW attachments (WSZYSTKIE — nie tylko do $VPCS) ===
+# Nie filtrujemy po $VPCS: jeśli VPC było usunięte ręcznie, attachment zostaje
+# osierocony i nie pasuje do filtra resource-id. Bierzemy wszystkie aktywne.
+echo "--- [4/10] TGW attachments (all) ---"
 ATTS_TO_WAIT=()
-for vpc in "${VPCS[@]}"; do
-  for att in $(aws ec2 describe-transit-gateway-attachments --region "$REGION" \
-    --filters "Name=resource-id,Values=$vpc" "Name=resource-type,Values=vpc" \
-    --query 'TransitGatewayAttachments[?State!=`deleted` && State!=`deleting`].TransitGatewayAttachmentId' \
-    --output text 2>/dev/null); do
-    echo "Deleting TGW attachment: $att"
-    aws ec2 delete-transit-gateway-vpc-attachment --region "$REGION" \
-      --transit-gateway-attachment-id "$att" 2>&1 | sed 's/^/    /' || true
-    ATTS_TO_WAIT+=("$att")
-  done
+for att in $(aws ec2 describe-transit-gateway-attachments --region "$REGION" \
+  --query 'TransitGatewayAttachments[?State!=`deleted` && State!=`deleting`].TransitGatewayAttachmentId' \
+  --output text 2>/dev/null); do
+  echo "Deleting TGW attachment: $att"
+  aws ec2 delete-transit-gateway-vpc-attachment --region "$REGION" \
+    --transit-gateway-attachment-id "$att" 2>&1 | sed 's/^/    /' || true
+  ATTS_TO_WAIT+=("$att")
 done
 for att in "${ATTS_TO_WAIT[@]}"; do
   echo "Waiting for TGW attachment $att..."
@@ -127,27 +128,28 @@ for att in "${ATTS_TO_WAIT[@]}"; do
   done
 done
 
-# === [5/10] Transit Gateway (jeśli nie ma już attachmentów) ===
-echo "--- [5/10] Transit Gateway ---"
-if [[ -n "${TGW_ID:-}" ]]; then
-  remaining=$(aws ec2 describe-transit-gateway-attachments --region "$REGION" \
-    --filters "Name=transit-gateway-id,Values=$TGW_ID" \
-    --query 'TransitGatewayAttachments[?State!=`deleted` && State!=`deleting`].TransitGatewayAttachmentId' \
-    --output text 2>/dev/null)
-  if [[ -z "$remaining" ]]; then
-    echo "Deleting TGW: $TGW_ID"
-    aws ec2 delete-transit-gateway --region "$REGION" --transit-gateway-id "$TGW_ID" 2>&1 | sed 's/^/    /' || true
-    while true; do
-      state=$(aws ec2 describe-transit-gateways --region "$REGION" --transit-gateway-ids "$TGW_ID" \
-        --query 'TransitGateways[0].State' --output text 2>/dev/null || echo "")
-      [[ -z "$state" || "$state" == "deleted" || "$state" == "deleting" ]] && break
-      echo "  state=$state, sleep 15s"
-      sleep 15
-    done
-  else
-    echo "SKIP TGW $TGW_ID — ma jeszcze aktywne attachments: $remaining"
-  fi
+# === [5/10] Transit Gateways (auto-discover — usuwa wszystkie TGW na koncie w regionie) ===
+# Nie polegamy na $TGW_ID z devops-vars.sh: po ręcznym usunięciu VPC zmienna może
+# być nieaktualna, a TGW i tak kosztuje ~$36/mc. Bierzemy wszystkie aktywne TGW.
+echo "--- [5/10] Transit Gateways ---"
+mapfile -t TGWS_TO_DELETE < <(aws ec2 describe-transit-gateways --region "$REGION" \
+  --query 'TransitGateways[?State!=`deleted` && State!=`deleting`].TransitGatewayId' \
+  --output text 2>/dev/null)
+if [[ ${#TGWS_TO_DELETE[@]} -eq 0 ]]; then
+  echo "Brak TGW"
 fi
+for tgw in "${TGWS_TO_DELETE[@]}"; do
+  [[ -z "$tgw" ]] && continue
+  echo "Deleting TGW: $tgw"
+  aws ec2 delete-transit-gateway --region "$REGION" --transit-gateway-id "$tgw" 2>&1 | sed 's/^/    /' || true
+  while true; do
+    state=$(aws ec2 describe-transit-gateways --region "$REGION" --transit-gateway-ids "$tgw" \
+      --query 'TransitGateways[0].State' --output text 2>/dev/null || echo "")
+    [[ -z "$state" || "$state" == "deleted" || "$state" == "deleting" ]] && break
+    echo "  state=$state, sleep 15s"
+    sleep 15
+  done
+done
 
 # === [6/10] Custom Route Tables (zostaw main) ===
 echo "--- [6/10] Custom Route Tables ---"
