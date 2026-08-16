@@ -166,17 +166,27 @@ TGW_ID=$(aws ec2 create-transit-gateway --region "$REGION" \
   --query 'TransitGateway.TransitGatewayId' --output text)
 savevar TGW_ID "$TGW_ID"
 echo "TGW: $TGW_ID — czekam na available..."
-aws ec2 wait transit-gateway-available --region "$REGION" --transit-gateway-ids "$TGW_ID"
+# UWAGA: `aws ec2 wait transit-gateway-available` NIE ISTNIEJE w CLI (invalid choice).
+# Poll loop z describe — jak w teardown.sh dla NAT GW.
+while true; do
+  TGW_STATE=$(aws ec2 describe-transit-gateways --region "$REGION" --transit-gateway-ids "$TGW_ID" \
+    --query 'TransitGateways[0].State' --output text)
+  [[ "$TGW_STATE" == "available" ]] && break
+  sleep 15
+done
+echo "TGW available."
 
 # === [8/10] TGW attachments (VPC1, VPC2) ===
 echo "--- [8/10] TGW attachments ---"
+# UWAGA: TGW attachment = 1 subnet per AZ. Dwa subnety z tego samego AZ dają
+# błąd DuplicateSubnetsInSameZone — dlatego tylko PUB1 (eu-central-1a).
 TGW_ATTACH1_ID=$(aws ec2 create-transit-gateway-vpc-attachment --region "$REGION" \
-  --transit-gateway-id "$TGW_ID" --vpc-id "$VPC1_ID" --subnet-ids "$PUB1_ID" "$PRIV1_ID" \
+  --transit-gateway-id "$TGW_ID" --vpc-id "$VPC1_ID" --subnet-ids "$PUB1_ID" \
   --query 'TransitGatewayVpcAttachment.TransitGatewayAttachmentId' --output text)
 savevar TGW_ATTACH1_ID "$TGW_ATTACH1_ID"
 
 TGW_ATTACH2_ID=$(aws ec2 create-transit-gateway-vpc-attachment --region "$REGION" \
-  --transit-gateway-id "$TGW_ID" --vpc-id "$VPC2_ID" --subnet-ids "$PUB2_ID" "$PRIV2_ID" \
+  --transit-gateway-id "$TGW_ID" --vpc-id "$VPC2_ID" --subnet-ids "$PUB2_ID" \
   --query 'TransitGatewayVpcAttachment.TransitGatewayAttachmentId' --output text)
 savevar TGW_ATTACH2_ID "$TGW_ATTACH2_ID"
 echo "Czekam na TGW attachments available..."
